@@ -128,8 +128,9 @@ export function createWikiLinkSuggestion(
             return true
           }
           if (props.event.key === 'Enter') {
-            if (currentItems[selectedIndex]) {
-              onSelectFn(currentItems[selectedIndex])
+            const item = currentItems[selectedIndex]
+            if (item) {
+              onSelectFn(item)
             }
             return true
           }
