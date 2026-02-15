@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import type { GraphNode, GraphEdge } from '../../types/ontology'
 import {
   NODE_TYPE_COLORS,
