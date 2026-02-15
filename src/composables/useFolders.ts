@@ -43,7 +43,7 @@ export function useFolders() {
         slug,
         parent_id: parentId ?? null,
         is_system: false,
-      })
+      } as any)
       .select()
       .single()
 
