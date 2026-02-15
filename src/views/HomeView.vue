@@ -1,17 +1,23 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useNodes } from '../composables/useNodes'
 import { useEdges } from '../composables/useEdges'
 import { useFolders } from '../composables/useFolders'
-import NoteEditor from '../components/editor/NoteEditor.vue'
-import GraphCanvas from '../components/graph/GraphCanvas.vue'
-import InboxView from '../components/inbox/InboxView.vue'
+import FolderTree from '../components/layout/FolderTree.vue'
+import TagList from '../components/layout/TagList.vue'
+import TipTapEditor from '../components/editor/TipTapEditor.vue'
+import OrphanAlert from '../components/editor/OrphanAlert.vue'
+import IntelligencePanel from '../components/intelligence/IntelligencePanel.vue'
 import SearchPanel from '../components/common/SearchPanel.vue'
-import type { CreateNodeInput, UpdateNodeInput, GraphNode, GraphEdge, EdgeType } from '../types/ontology'
+import type {
+  CreateNodeInput,
+  UpdateNodeInput,
+  EdgeType,
+  Node as MemoNode,
+} from '../types/ontology'
+import { NODE_TYPE_COLORS } from '../types/ontology'
 
-type ViewTab = 'editor' | 'graph' | 'inbox' | 'search'
-
-const activeTab = ref<ViewTab>('editor')
+// --- State ---
 
 const {
   nodes,
@@ -28,50 +34,77 @@ const {
 const {
   edges,
   fetchAllEdges,
+  fetchEdgesForNode,
   createEdge,
 } = useEdges()
 
-const { folders, fetchFolders } = useFolders()
+const { folders, fetchFolders, createFolder } = useFolders()
+
+const activeFolderId = ref<string | null>(null)
+const activeTag = ref<string | null>(null)
+const editorContent = ref('')
+const showOrphanAlert = ref(false)
+const showSearch = ref(false)
+const lastCreatedNodeId = ref<string | null>(null)
+
+// --- Computed ---
+
+// All unique tags across nodes
+const allTags = computed(() => {
+  const tagSet = new Set<string>()
+  nodes.value.forEach((n) => n.tags.forEach((t) => tagSet.add(t)))
+  return Array.from(tagSet).sort()
+})
+
+// Filtered notes list for sidebar
+const filteredNodes = computed(() => {
+  let list = nodes.value
+
+  if (activeFolderId.value) {
+    list = list.filter((n) => n.folder_id === activeFolderId.value)
+  }
+
+  if (activeTag.value) {
+    list = list.filter((n) => n.tags.includes(activeTag.value!))
+  }
+
+  return list
+})
+
+// Node list for wiki-link autocomplete
+const allNodeOptions = computed(() =>
+  nodes.value.map((n) => ({ id: n.id, title: n.title || 'Untitled' }))
+)
+
+// --- Lifecycle ---
 
 onMounted(async () => {
   await Promise.all([fetchNodes(), fetchAllEdges(), fetchFolders()])
 })
 
-// Transform to graph visualization format
-const graphNodes = computed<GraphNode[]>(() =>
-  nodes.value.map((n) => ({
-    id: n.id,
-    title: n.title || 'Untitled',
-    type: n.type,
-    status: n.status,
-  }))
-)
+// --- Event Handlers ---
 
-const graphEdges = computed<GraphEdge[]>(() =>
-  edges.value.map((e) => ({
-    id: e.id,
-    source: e.source_id,
-    target: e.target_id,
-    type: e.type,
-    status: e.status,
-    weight: e.weight,
-    label: e.label ?? undefined,
-  }))
-)
+async function handleSelectNode(id: string) {
+  await fetchNode(id)
+  showSearch.value = false
+}
+
+function handleNewNote() {
+  currentNode.value = null
+  showSearch.value = false
+}
 
 async function handleSave(input: CreateNodeInput | UpdateNodeInput) {
   if ('id' in input) {
     await updateNode(input)
   } else {
-    await createNode(input)
-    currentNode.value = null
+    const newNode = await createNode(input)
+    if (newNode) {
+      lastCreatedNodeId.value = newNode.id
+      currentNode.value = newNode
+    }
   }
   await fetchNodes()
-}
-
-async function handleSelectNode(id: string) {
-  await fetchNode(id)
-  activeTab.value = 'editor'
 }
 
 async function handleApprove(id: string) {
@@ -84,35 +117,46 @@ async function handleDeprecate(id: string) {
   await fetchNodes()
 }
 
-async function handleCreateLink(payload: { targetQuery: string; edgeType: EdgeType }) {
-  if (!currentNode.value) return
+async function handleCreateEdge(payload: { sourceId: string; targetId: string; edgeType: EdgeType }) {
+  await createEdge({
+    source_id: payload.sourceId,
+    target_id: payload.targetId,
+    type: payload.edgeType,
+  })
+  await fetchAllEdges()
+}
 
-  // Find target node by title
-  const target = nodes.value.find(
-    (n) => n.title.toLowerCase() === payload.targetQuery.toLowerCase()
-  )
-
-  if (target) {
-    await createEdge({
-      source_id: currentNode.value.id,
-      target_id: target.id,
-      type: payload.edgeType,
-    })
-    await fetchAllEdges()
+async function handleCheckOrphan(nodeId: string) {
+  // Check if this node has any edges
+  await fetchEdgesForNode(nodeId)
+  if (edges.value.length === 0) {
+    showOrphanAlert.value = true
   }
 }
 
-function handleNewNote() {
-  currentNode.value = null
-  activeTab.value = 'editor'
+async function handleOrphanAddTag(tag: string) {
+  if (currentNode.value) {
+    const newTags = [...currentNode.value.tags, tag]
+    await updateNode({ id: currentNode.value.id, tags: newTags })
+    await fetchNodes()
+  }
+  showOrphanAlert.value = false
+}
+
+async function handleCreateFolder(name: string) {
+  await createFolder(name)
+}
+
+function handleContentChange(text: string) {
+  editorContent.value = text
 }
 </script>
 
 <template>
-  <div class="home-layout">
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-header">
+  <div class="tri-pane">
+    <!-- ===== LEFT PANE: Navigation ===== -->
+    <aside class="pane-left">
+      <div class="left-header">
         <h1 class="app-title">MEMO</h1>
         <p class="app-subtitle">Ontology Knowledge System</p>
       </div>
@@ -121,131 +165,123 @@ function handleNewNote() {
         + New Note
       </button>
 
-      <!-- Navigation tabs -->
-      <nav class="sidebar-nav">
-        <button
-          class="nav-item"
-          :class="{ active: activeTab === 'editor' }"
-          @click="activeTab = 'editor'"
-        >
-          Editor
-        </button>
-        <button
-          class="nav-item"
-          :class="{ active: activeTab === 'graph' }"
-          @click="activeTab = 'graph'"
-        >
-          Graph
-        </button>
-        <button
-          class="nav-item"
-          :class="{ active: activeTab === 'inbox' }"
-          @click="activeTab = 'inbox'"
-        >
-          Inbox
-        </button>
-        <button
-          class="nav-item"
-          :class="{ active: activeTab === 'search' }"
-          @click="activeTab = 'search'"
-        >
-          Search
-        </button>
-      </nav>
+      <button
+        class="search-toggle"
+        :class="{ active: showSearch }"
+        @click="showSearch = !showSearch"
+      >
+        Search...
+      </button>
 
-      <!-- Folders -->
-      <div class="sidebar-folders">
-        <h3 class="section-title">Folders</h3>
-        <div
-          v-for="folder in folders"
-          :key="folder.id"
-          class="folder-item"
-          :class="{ system: folder.is_system }"
-        >
-          {{ folder.name }}
+      <!-- Folder Tree -->
+      <FolderTree
+        :folders="folders"
+        :active-folder-id="activeFolderId"
+        @select-folder="(id) => activeFolderId = id"
+        @create-folder="handleCreateFolder"
+      />
+
+      <!-- Tag List -->
+      <TagList
+        :tags="allTags"
+        :active-tag="activeTag"
+        @select-tag="(tag) => activeTag = tag"
+      />
+
+      <!-- Notes list -->
+      <div class="notes-list">
+        <div class="notes-header">
+          <span class="section-label">Notes</span>
+          <span class="notes-count">{{ filteredNodes.length }}</span>
         </div>
-      </div>
-
-      <!-- Recent nodes -->
-      <div class="sidebar-recent">
-        <h3 class="section-title">Recent</h3>
+        <div v-if="nodesLoading" class="notes-loading">Loading...</div>
         <div
-          v-for="node in nodes.slice(0, 10)"
+          v-for="node in filteredNodes.slice(0, 50)"
           :key="node.id"
-          class="recent-item"
-          :class="{ experimental: node.status === 'Experimental' }"
+          class="note-item"
+          :class="{
+            active: currentNode?.id === node.id,
+            experimental: node.status === 'Experimental'
+          }"
           @click="handleSelectNode(node.id)"
         >
-          <span class="recent-type" :style="{ color: node.type === 'Claim' ? '#F59E0B' : '#6B7280' }">
-            {{ node.type.charAt(0) }}
-          </span>
-          {{ node.title || 'Untitled' }}
+          <span
+            class="note-type-dot"
+            :style="{ backgroundColor: NODE_TYPE_COLORS[node.type] }"
+          />
+          <span class="note-title">{{ node.title || 'Untitled' }}</span>
         </div>
       </div>
     </aside>
 
-    <!-- Main content area -->
-    <main class="main-content">
-      <div v-if="nodesLoading" class="loading">Loading...</div>
+    <!-- ===== CENTER PANE: Editor ===== -->
+    <main class="pane-center">
+      <!-- Search overlay -->
+      <div v-if="showSearch" class="search-overlay">
+        <SearchPanel @select-node="handleSelectNode" />
+      </div>
 
-      <template v-else>
-        <NoteEditor
-          v-if="activeTab === 'editor'"
-          :node="currentNode"
-          @save="handleSave"
-          @approve="handleApprove"
-          @deprecate="handleDeprecate"
-          @create-link="handleCreateLink"
-        />
-
-        <div v-else-if="activeTab === 'graph'" class="graph-view">
-          <GraphCanvas
-            :nodes="graphNodes"
-            :edges="graphEdges"
-            :selected-node-id="currentNode?.id"
-            @select-node="handleSelectNode"
-          />
-        </div>
-
-        <InboxView
-          v-else-if="activeTab === 'inbox'"
-          @select-node="handleSelectNode"
-        />
-
-        <SearchPanel
-          v-else-if="activeTab === 'search'"
-          @select-node="handleSelectNode"
-        />
-      </template>
+      <!-- TipTap Editor -->
+      <TipTapEditor
+        v-else
+        :node="currentNode"
+        :all-nodes="allNodeOptions"
+        @save="handleSave"
+        @approve="handleApprove"
+        @deprecate="handleDeprecate"
+        @create-edge="handleCreateEdge"
+        @content-change="handleContentChange"
+        @check-orphan="handleCheckOrphan"
+      />
     </main>
+
+    <!-- ===== RIGHT PANE: Intelligence ===== -->
+    <aside class="pane-right">
+      <IntelligencePanel
+        :current-node-id="currentNode?.id"
+        :current-content="editorContent"
+        @select-node="handleSelectNode"
+      />
+    </aside>
+
+    <!-- Orphan Alert Toast -->
+    <OrphanAlert
+      :show="showOrphanAlert"
+      :node-title="currentNode?.title ?? ''"
+      @dismiss="showOrphanAlert = false"
+      @add-tag="handleOrphanAddTag"
+      @open-link="showOrphanAlert = false"
+    />
   </div>
 </template>
 
 <style scoped>
-.home-layout {
+/* ===== Tri-Pane Layout ===== */
+.tri-pane {
   display: flex;
   height: 100vh;
   background: #F9FAFB;
 }
 
-/* Sidebar */
-.sidebar {
+/* ----- LEFT PANE ----- */
+.pane-left {
   width: 260px;
   background: white;
   border-right: 1px solid #E5E7EB;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.left-header {
+  padding: 16px 16px 10px;
+  border-bottom: 1px solid #F3F4F6;
   flex-shrink: 0;
 }
 
-.sidebar-header {
-  padding: 20px 16px 12px;
-  border-bottom: 1px solid #F3F4F6;
-}
-
 .app-title {
-  font-size: 1.3rem;
+  font-size: 1.2rem;
   font-weight: 800;
   color: #111827;
   margin: 0;
@@ -253,134 +289,164 @@ function handleNewNote() {
 }
 
 .app-subtitle {
-  font-size: 0.7rem;
+  font-size: 0.62rem;
   color: #9CA3AF;
-  margin: 2px 0 0;
+  margin: 1px 0 0;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
 }
 
 .new-note-btn {
-  margin: 12px 16px;
-  padding: 10px;
+  margin: 10px 12px 4px;
+  padding: 8px;
   background: #3B82F6;
   color: white;
   border: none;
-  border-radius: 8px;
+  border-radius: 6px;
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   cursor: pointer;
-  transition: background 0.15s;
+  flex-shrink: 0;
+  transition: background 0.12s;
 }
 
 .new-note-btn:hover {
   background: #2563EB;
 }
 
-.sidebar-nav {
-  display: flex;
-  flex-direction: column;
-  padding: 0 8px;
-  gap: 2px;
-}
-
-.nav-item {
-  padding: 8px 12px;
-  border: none;
-  background: none;
-  text-align: left;
-  font-size: 0.9rem;
-  color: #6B7280;
-  cursor: pointer;
+.search-toggle {
+  margin: 0 12px 6px;
+  padding: 7px 10px;
+  background: #F3F4F6;
+  border: 1px solid #E5E7EB;
   border-radius: 6px;
-  font-weight: 500;
-}
-
-.nav-item:hover {
-  background: #F3F4F6;
-}
-
-.nav-item.active {
-  background: #EFF6FF;
-  color: #3B82F6;
-}
-
-.sidebar-folders,
-.sidebar-recent {
-  padding: 12px 16px;
-}
-
-.section-title {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: #9CA3AF;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin: 0 0 8px;
-}
-
-.folder-item {
-  padding: 6px 8px;
-  font-size: 0.85rem;
-  color: #374151;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.folder-item:hover {
-  background: #F3F4F6;
-}
-
-.folder-item.system {
-  font-weight: 500;
-}
-
-.recent-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
   font-size: 0.8rem;
-  color: #374151;
-  border-radius: 4px;
+  color: #9CA3AF;
+  text-align: left;
   cursor: pointer;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.recent-item:hover {
-  background: #F3F4F6;
-}
-
-.recent-item.experimental {
-  opacity: 0.6;
-  border-left: 2px dashed #FCD34D;
-  padding-left: 6px;
-}
-
-.recent-type {
-  font-weight: 700;
-  font-size: 0.7rem;
   flex-shrink: 0;
 }
 
-/* Main content */
-.main-content {
-  flex: 1;
-  overflow-y: auto;
+.search-toggle:hover, .search-toggle.active {
+  border-color: #3B82F6;
+  color: #3B82F6;
 }
 
-.loading {
+/* Notes list */
+.notes-list {
+  flex: 1;
+  overflow-y: auto;
+  border-top: 1px solid #F3F4F6;
+}
+
+.notes-header {
   display: flex;
-  justify-content: center;
   align-items: center;
-  height: 200px;
+  justify-content: space-between;
+  padding: 10px 16px 6px;
+  position: sticky;
+  top: 0;
+  background: white;
+  z-index: 1;
+}
+
+.section-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: #9CA3AF;
 }
 
-.graph-view {
-  height: 100%;
-  padding: 16px;
+.notes-count {
+  font-size: 0.65rem;
+  color: #9CA3AF;
+  background: #F3F4F6;
+  padding: 1px 6px;
+  border-radius: 9999px;
+}
+
+.notes-loading {
+  padding: 20px;
+  text-align: center;
+  color: #D1D5DB;
+  font-size: 0.82rem;
+}
+
+.note-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  cursor: pointer;
+  transition: background 0.08s;
+}
+
+.note-item:hover {
+  background: #F9FAFB;
+}
+
+.note-item.active {
+  background: #EFF6FF;
+}
+
+.note-item.experimental {
+  opacity: 0.6;
+  border-left: 2px dashed #FCD34D;
+}
+
+.note-type-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.note-title {
+  font-size: 0.82rem;
+  color: #374151;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-item.active .note-title {
+  color: #2563EB;
+  font-weight: 500;
+}
+
+/* ----- CENTER PANE ----- */
+.pane-center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.search-overlay {
+  flex: 1;
+  overflow-y: auto;
+  background: white;
+}
+
+/* ----- RIGHT PANE ----- */
+.pane-right {
+  width: 320px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+/* Responsive: hide right pane on small screens */
+@media (max-width: 1100px) {
+  .pane-right {
+    display: none;
+  }
+}
+
+@media (max-width: 800px) {
+  .pane-left {
+    width: 200px;
+  }
 }
 </style>

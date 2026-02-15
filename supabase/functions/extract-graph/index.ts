@@ -9,10 +9,11 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const GOOGLE_API_KEY = Deno.env.get('GOOGLE_API_KEY')!
+const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
-const MODEL_ID = 'gemini-2.5-pro'
+const DEFAULT_MODEL = 'gemini-2.5-flash'
 
 interface ToulminExtraction {
   claims: {
@@ -82,7 +83,8 @@ Deno.serve(async (req) => {
       })
     }
 
-    const { content, source_node_id, user_id } = await req.json()
+    const { content, source_node_id, user_id, model } = await req.json()
+    const modelId = model || DEFAULT_MODEL
 
     if (!content || !user_id) {
       return new Response(JSON.stringify({ error: 'content and user_id required' }), {
@@ -91,28 +93,53 @@ Deno.serve(async (req) => {
       })
     }
 
-    // Call Gemini API for extraction
-    const geminiResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:generateContent?key=${GOOGLE_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [{ text: EXTRACTION_PROMPT + content }],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.2,
-            responseMimeType: 'application/json',
-          },
-        }),
-      }
-    )
+    // Call AI API for extraction (supports Google and OpenAI models)
+    let responseText: string | null = null
 
-    const geminiData = await geminiResponse.json()
-    const responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text
+    if (modelId.startsWith('gpt') && OPENAI_API_KEY) {
+      // OpenAI path
+      const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: modelId,
+          messages: [
+            { role: 'system', content: 'You are an epistemic analyst. Return only valid JSON.' },
+            { role: 'user', content: EXTRACTION_PROMPT + content },
+          ],
+          temperature: 0.2,
+          response_format: { type: 'json_object' },
+        }),
+      })
+      const openaiData = await openaiRes.json()
+      responseText = openaiData.choices?.[0]?.message?.content ?? null
+    } else {
+      // Google Gemini path (default)
+      const geminiModel = modelId.startsWith('gemini') ? modelId : 'gemini-2.5-flash'
+      const geminiResponse = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${GOOGLE_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [{ text: EXTRACTION_PROMPT + content }],
+              },
+            ],
+            generationConfig: {
+              temperature: 0.2,
+              responseMimeType: 'application/json',
+            },
+          }),
+        }
+      )
+      const geminiData = await geminiResponse.json()
+      responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text ?? null
+    }
 
     if (!responseText) {
       return new Response(JSON.stringify({ error: 'AI extraction failed' }), {
@@ -140,7 +167,7 @@ Deno.serve(async (req) => {
           status: 'Experimental',
           provenance: {
             creator: 'AI',
-            model: MODEL_ID,
+            model: modelId,
             source_node_id: source_node_id ?? null,
             confidence: claim.qualifier,
             method: 'extract_graph',
@@ -168,7 +195,7 @@ Deno.serve(async (req) => {
           status: 'Experimental',
           provenance: {
             creator: 'AI',
-            model: MODEL_ID,
+            model: modelId,
             source_node_id: source_node_id ?? null,
             method: 'extract_graph',
           },
@@ -203,7 +230,7 @@ Deno.serve(async (req) => {
           status: 'Experimental',
           provenance: {
             creator: 'AI',
-            model: MODEL_ID,
+            model: modelId,
             source_node_id: source_node_id ?? null,
             method: 'extract_graph',
           },
@@ -223,7 +250,7 @@ Deno.serve(async (req) => {
       user_id,
       action: 'extract_graph',
       actor: 'AI',
-      model_id: MODEL_ID,
+      model_id: modelId,
       description: `Extracted ${createdNodeIds.length} nodes and ${createdEdgeIds.length} edges from text`,
       metadata: {
         source_node_id,

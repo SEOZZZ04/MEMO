@@ -1,38 +1,95 @@
-# MEMO - Ontology Knowledge System: Setup Guide
+# MEMO - Ontology Knowledge System: Complete Setup Guide
+
+> **2nd Generation AI Notepad** — Ontology-Driven, Provenance-First, Zero Knowledge Debt
+
+---
+
+## Quick Reference Checklist
+
+- [ ] **Step 1.** Create Supabase project
+- [ ] **Step 2.** Run migration SQL in SQL Editor
+- [ ] **Step 3.** Get Google AI API key
+- [ ] **Step 4.** Get OpenAI API key
+- [ ] **Step 5.** Set Edge Function secrets
+- [ ] **Step 6.** Deploy 4 Edge Functions
+- [ ] **Step 7.** Create `.env` file locally
+- [ ] **Step 8.** `npm install && npm run dev`
+- [ ] **Step 9.** Sign up & run seed SQL
+- [ ] **Step 10.** (Optional) Deploy to Render
+
+---
 
 ## Architecture Overview
 
-MEMO is an **ontology-driven personal knowledge system** built on 3 principles:
+```
+ +------------------+     +-------------------+     +------------------+
+ | LEFT PANE        |     | CENTER PANE       |     | RIGHT PANE       |
+ | - Folder Tree    |     | - TipTap Editor   |     | - Model Switcher |
+ | - Tag List       |     | - [[ Wiki Links   |     | - Local Graph    |
+ | - Notes List     |     | - Orphan Alert    |     | - Similar Context|
+ +------------------+     +-------------------+     +------------------+
+          |                        |                         |
+          +------------------------+-------------------------+
+                                   |
+                         +-------------------+
+                         |  Supabase Backend |
+                         | - PostgreSQL      |
+                         | - pgvector        |
+                         | - Edge Functions  |
+                         +-------------------+
+                           |             |
+                    +------+------+  +---+---+
+                    | Google AI   |  | OpenAI|
+                    | Gemini 2.5  |  | GPT-4o|
+                    +-------------+  +-------+
+```
 
-1. **Semantic Structure**: Every node has a type (`Claim`, `Evidence`, `Source`...), every edge has a link type (`supports`, `refutes`, `caused_by`...)
-2. **Governance & Status**: All data has a lifecycle (`Active` → `Experimental` → `Deprecated`). AI-generated data is always `Experimental` until user approval.
-3. **Provenance**: Every piece of data tracks who created it, when, how, and based on what.
-
-**Tech Stack**: Vue 3 + TypeScript + Vite + Supabase (PostgreSQL + Edge Functions) + Gemini AI
+**Tech Stack**: Vue 3 + TipTap + TypeScript + Vite + Supabase + Gemini + OpenAI
 
 ---
 
 ## 1. Supabase Project Setup
 
-### 1.1 Create Supabase Project
+### 1.1 Create Project
 
-1. Go to [supabase.com](https://supabase.com) and create a new project
-2. Note your **Project URL** and **Anon Key** from Settings → API
+1. Go to [supabase.com/dashboard](https://supabase.com/dashboard)
+2. Click **"New Project"**
+3. Choose a name (e.g., `memo-knowledge`)
+4. Set a strong database password (save it!)
+5. Select the region closest to you
+6. Click **"Create new project"** and wait ~2 minutes
 
-### 1.2 Run Migration Script
+### 1.2 Get Your Keys
 
-Open **SQL Editor** in Supabase Dashboard and execute the following migration script in its entirety:
+Go to **Settings > API** and note:
+
+| Key | Where to find it | Used in |
+|-----|-------------------|---------|
+| **Project URL** | `https://xxxxx.supabase.co` | `.env` as `VITE_SUPABASE_URL` |
+| **anon public** key | Under "Project API keys" | `.env` as `VITE_SUPABASE_ANON_KEY` |
+| **service_role** key | Under "Project API keys" (click "Reveal") | Edge Functions (auto-injected) |
+| **Project Ref** | In the URL: `supabase.com/dashboard/project/<ref>` | CLI linking |
+
+### 1.3 Enable pgvector Extension
+
+1. Go to **Database > Extensions**
+2. Search for `vector` and enable it
+3. Search for `pg_trgm` and enable it
+
+### 1.4 Run Migration SQL
+
+Go to **SQL Editor** and paste this **entire script** and click **Run**:
 
 ```sql
--- Enable required extensions
+-- =============================================================
+-- MEMO Ontology Knowledge System - Full Migration
+-- =============================================================
+
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "vector";
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 
--- ============================
--- ENUM TYPES
--- ============================
-
+-- Enum Types
 CREATE TYPE node_type AS ENUM (
   'Note', 'Claim', 'Evidence', 'Source', 'Person', 'Definition'
 );
@@ -53,79 +110,69 @@ CREATE TYPE provenance_action AS ENUM (
   'approve', 'deprecate', 'extract_graph', 'summarize', 'link_suggest'
 );
 
--- ============================
--- TABLES
--- ============================
-
--- Folders
+-- Tables
 CREATE TABLE folders (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id     UUID NOT NULL,
-  name        TEXT NOT NULL,
-  slug        TEXT NOT NULL,
-  is_system   BOOLEAN NOT NULL DEFAULT false,
-  parent_id   UUID REFERENCES folders(id) ON DELETE CASCADE,
-  sort_order  INTEGER NOT NULL DEFAULT 0,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL,
+  name TEXT NOT NULL,
+  slug TEXT NOT NULL,
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  parent_id UUID REFERENCES folders(id) ON DELETE CASCADE,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(user_id, slug)
 );
 
--- Nodes (Knowledge Objects)
 CREATE TABLE nodes (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id     UUID NOT NULL,
-  folder_id   UUID REFERENCES folders(id) ON DELETE SET NULL,
-  title       TEXT NOT NULL DEFAULT '',
-  content     TEXT NOT NULL DEFAULT '',
-  type        node_type NOT NULL DEFAULT 'Note',
-  status      governance_status NOT NULL DEFAULT 'Active',
-  provenance  JSONB NOT NULL DEFAULT '{}'::jsonb,
-  embedding   vector(1536),
-  tags        TEXT[] DEFAULT '{}',
-  word_count  INTEGER DEFAULT 0,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL,
+  folder_id UUID REFERENCES folders(id) ON DELETE SET NULL,
+  title TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  type node_type NOT NULL DEFAULT 'Note',
+  status governance_status NOT NULL DEFAULT 'Active',
+  provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
+  embedding vector(1536),
+  tags TEXT[] DEFAULT '{}',
+  word_count INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Edges (Semantic Relationships)
 CREATE TABLE edges (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id     UUID NOT NULL,
-  source_id   UUID NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-  target_id   UUID NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-  type        edge_type NOT NULL DEFAULT 'related_to',
-  status      governance_status NOT NULL DEFAULT 'Active',
-  weight      REAL NOT NULL DEFAULT 1.0 CHECK (weight >= 0.0 AND weight <= 1.0),
-  label       TEXT,
-  provenance  JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL,
+  source_id UUID NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  target_id UUID NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  type edge_type NOT NULL DEFAULT 'related_to',
+  status governance_status NOT NULL DEFAULT 'Active',
+  weight REAL NOT NULL DEFAULT 1.0 CHECK (weight >= 0.0 AND weight <= 1.0),
+  label TEXT,
+  provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(source_id, target_id, type),
   CHECK (source_id != target_id)
 );
 
--- Provenance Logs (Audit Trail)
 CREATE TABLE provenance_logs (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id       UUID NOT NULL,
-  action        provenance_action NOT NULL,
-  description   TEXT,
-  actor         creator_type NOT NULL DEFAULT 'User',
-  model_id      TEXT,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL,
+  action provenance_action NOT NULL,
+  description TEXT,
+  actor creator_type NOT NULL DEFAULT 'User',
+  model_id TEXT,
   model_version TEXT,
   target_node_id UUID REFERENCES nodes(id) ON DELETE SET NULL,
   target_edge_id UUID REFERENCES edges(id) ON DELETE SET NULL,
-  before_state  JSONB,
-  after_state   JSONB,
-  metadata      JSONB DEFAULT '{}'::jsonb,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  before_state JSONB,
+  after_state JSONB,
+  metadata JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- ============================
--- INDEXES
--- ============================
-
+-- Indexes
 CREATE INDEX idx_folders_user ON folders(user_id);
 CREATE INDEX idx_nodes_user ON nodes(user_id);
 CREATE INDEX idx_nodes_folder ON nodes(folder_id);
@@ -150,10 +197,7 @@ CREATE INDEX idx_prov_node ON provenance_logs(target_node_id);
 CREATE INDEX idx_prov_edge ON provenance_logs(target_edge_id);
 CREATE INDEX idx_prov_created ON provenance_logs(created_at DESC);
 
--- ============================
--- TRIGGERS
--- ============================
-
+-- Triggers
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -166,16 +210,10 @@ CREATE TRIGGER trg_nodes_updated_at BEFORE UPDATE ON nodes FOR EACH ROW EXECUTE 
 CREATE TRIGGER trg_edges_updated_at BEFORE UPDATE ON edges FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER trg_folders_updated_at BEFORE UPDATE ON folders FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
--- ============================
--- RPC FUNCTIONS
--- ============================
-
--- Vector similarity search
+-- RPC Functions
 CREATE OR REPLACE FUNCTION search_nodes_by_embedding(
-  query_embedding vector(1536),
-  match_user_id UUID,
-  match_threshold FLOAT DEFAULT 0.7,
-  match_count INT DEFAULT 10
+  query_embedding vector(1536), match_user_id UUID,
+  match_threshold FLOAT DEFAULT 0.7, match_count INT DEFAULT 10
 )
 RETURNS TABLE (id UUID, title TEXT, content TEXT, type node_type, status governance_status, similarity FLOAT)
 LANGUAGE plpgsql AS $$
@@ -186,12 +224,9 @@ BEGIN
   FROM nodes n
   WHERE n.user_id = match_user_id AND n.status != 'Deprecated'
     AND 1 - (n.embedding <=> query_embedding) > match_threshold
-  ORDER BY n.embedding <=> query_embedding
-  LIMIT match_count;
-END;
-$$;
+  ORDER BY n.embedding <=> query_embedding LIMIT match_count;
+END; $$;
 
--- Graph traversal
 CREATE OR REPLACE FUNCTION get_node_context(
   p_node_id UUID, p_user_id UUID, p_depth INT DEFAULT 1
 )
@@ -206,8 +241,7 @@ BEGIN
     SELECT
       CASE WHEN e.source_id = p_node_id THEN e.target_id ELSE e.source_id END AS nid,
       e.type AS etype, e.weight AS eweight,
-      CASE WHEN e.source_id = p_node_id THEN 'outgoing'::TEXT ELSE 'incoming'::TEXT END AS dir,
-      1 AS d
+      CASE WHEN e.source_id = p_node_id THEN 'outgoing'::TEXT ELSE 'incoming'::TEXT END AS dir, 1 AS d
     FROM edges e
     WHERE (e.source_id = p_node_id OR e.target_id = p_node_id)
       AND e.user_id = p_user_id AND e.status != 'Deprecated'
@@ -215,19 +249,15 @@ BEGIN
     SELECT
       CASE WHEN e.source_id = gw.nid THEN e.target_id ELSE e.source_id END,
       e.type, e.weight,
-      CASE WHEN e.source_id = gw.nid THEN 'outgoing'::TEXT ELSE 'incoming'::TEXT END,
-      gw.d + 1
+      CASE WHEN e.source_id = gw.nid THEN 'outgoing'::TEXT ELSE 'incoming'::TEXT END, gw.d + 1
     FROM edges e JOIN graph_walk gw ON (e.source_id = gw.nid OR e.target_id = gw.nid)
     WHERE gw.d < p_depth AND e.user_id = p_user_id AND e.status != 'Deprecated'
       AND CASE WHEN e.source_id = gw.nid THEN e.target_id ELSE e.source_id END != p_node_id
   )
   SELECT n.id, n.title, n.type, n.status, gw.etype, gw.eweight, gw.dir, gw.d
-  FROM graph_walk gw JOIN nodes n ON n.id = gw.nid
-  WHERE n.status != 'Deprecated';
-END;
-$$;
+  FROM graph_walk gw JOIN nodes n ON n.id = gw.nid WHERE n.status != 'Deprecated';
+END; $$;
 
--- Text search (trigram)
 CREATE OR REPLACE FUNCTION search_nodes_by_text(
   query_text TEXT, match_user_id UUID, match_count INT DEFAULT 20
 )
@@ -240,15 +270,10 @@ BEGIN
   FROM nodes n
   WHERE n.user_id = match_user_id AND n.status != 'Deprecated'
     AND (n.title % query_text OR n.content % query_text)
-  ORDER BY rank DESC
-  LIMIT match_count;
-END;
-$$;
+  ORDER BY rank DESC LIMIT match_count;
+END; $$;
 
--- ============================
--- ROW LEVEL SECURITY
--- ============================
-
+-- Row Level Security
 ALTER TABLE folders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE nodes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE edges ENABLE ROW LEVEL SECURITY;
@@ -259,16 +284,12 @@ CREATE POLICY nodes_user_policy ON nodes FOR ALL USING (auth.uid() = user_id);
 CREATE POLICY edges_user_policy ON edges FOR ALL USING (auth.uid() = user_id);
 CREATE POLICY provenance_logs_user_policy ON provenance_logs FOR ALL USING (auth.uid() = user_id);
 
--- ============================
--- VIEWS
--- ============================
-
+-- Views
 CREATE OR REPLACE VIEW inbox_nodes AS
 SELECT n.*, f.name AS folder_name,
   (SELECT count(*) FROM edges e WHERE e.source_id = n.id OR e.target_id = n.id) AS edge_count
 FROM nodes n LEFT JOIN folders f ON n.folder_id = f.id
-WHERE n.status = 'Experimental'
-ORDER BY n.created_at DESC;
+WHERE n.status = 'Experimental' ORDER BY n.created_at DESC;
 
 CREATE OR REPLACE VIEW argumentation_graph AS
 SELECT c.id AS claim_id, c.title AS claim_title, c.content AS claim_content,
@@ -281,153 +302,215 @@ WHERE c.type = 'Claim' AND e.type IN ('supports', 'refutes')
 ORDER BY c.created_at DESC, e.type, e.weight DESC;
 ```
 
-> **Note**: The full migration file is also at `supabase/migrations/001_ontology_schema.sql`.
-
-### 1.3 Seed System Data
-
-After creating your first user account, replace `<YOUR_USER_UUID>` in `supabase/seed/001_system_data.sql` and run:
-
-```sql
--- Replace <YOUR_USER_UUID> with your actual user UUID from Auth > Users
-
-INSERT INTO folders (user_id, name, slug, is_system, sort_order) VALUES
-  ('<YOUR_USER_UUID>', 'Inbox',         'inbox',         true, 0),
-  ('<YOUR_USER_UUID>', 'Knowledge Base', 'knowledge-base', true, 1),
-  ('<YOUR_USER_UUID>', 'Archive',       'archive',       true, 2),
-  ('<YOUR_USER_UUID>', 'Trash',         'trash',         true, 3);
-```
+> Full file also available at `supabase/migrations/001_ontology_schema.sql`
 
 ---
 
-## 2. Edge Functions Setup
+## 2. API Keys Setup
 
-### 2.1 Set Environment Variables (Secrets)
+### 2.1 Google AI API Key (Required)
 
-In Supabase Dashboard → Edge Functions → Secrets, add:
+Used for: Gemini 2.5 Flash (speed/summarization), graph extraction
 
-| Key | Description |
-|-----|-------------|
-| `GOOGLE_API_KEY` | Google AI API key for Gemini 2.5 Pro |
-| `OPENAI_API_KEY` | OpenAI API key (for embeddings, optional) |
+1. Go to [Google AI Studio](https://aistudio.google.com/apikey)
+2. Click **"Create API Key"**
+3. Copy the key — it starts with `AIza...`
 
-> `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are automatically available in Edge Functions.
+> **Important**: Google AI Studio API has a free tier. Enable billing if you need higher rate limits.
 
-Or via CLI:
+### 2.2 OpenAI API Key (Required for GraphRAG & Embeddings)
+
+Used for: GPT-4o Mini (reasoning), text-embedding-3-small (vector search)
+
+1. Go to [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+2. Click **"Create new secret key"**
+3. Copy the key — it starts with `sk-...`
+
+> **Important**: OpenAI requires prepaid credits. Add $5-10 for development usage. The `text-embedding-3-small` model costs ~$0.02 per 1M tokens.
+
+---
+
+## 3. Edge Functions Deployment
+
+### 3.1 Install Supabase CLI
 
 ```bash
-supabase secrets set GOOGLE_API_KEY=your-google-api-key
-supabase secrets set OPENAI_API_KEY=your-openai-api-key
-```
+# macOS
+brew install supabase/tap/supabase
 
-### 2.2 Deploy Edge Functions
-
-```bash
-# Install Supabase CLI
+# npm (any platform)
 npm install -g supabase
 
-# Login
+# Verify
+supabase --version
+```
+
+### 3.2 Login and Link Project
+
+```bash
 supabase login
+supabase link --project-ref <YOUR_PROJECT_REF>
+```
 
-# Link to your project
-supabase link --project-ref your-project-ref
+Your project ref is in the Supabase Dashboard URL: `supabase.com/dashboard/project/<ref>`
 
-# Deploy functions
+### 3.3 Set Secrets (Environment Variables)
+
+```bash
+supabase secrets set GOOGLE_API_KEY=AIzaSy...your-google-key
+supabase secrets set OPENAI_API_KEY=sk-...your-openai-key
+```
+
+The following are **auto-injected** by Supabase (do NOT set manually):
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+### 3.4 Deploy All 4 Edge Functions
+
+```bash
 supabase functions deploy extract-graph
 supabase functions deploy ai-analyze
+supabase functions deploy find-similar
+supabase functions deploy graph-rag
 ```
+
+| Function | Purpose | Trigger |
+|----------|---------|---------|
+| `extract-graph` | Extract Claims/Evidence/Edges from text (Toulmin model) | On note save |
+| `ai-analyze` | Summarize, suggest links, check argumentation | Manual/AI |
+| `find-similar` | Real-time similar note recommendations | Editor typing |
+| `graph-rag` | Hybrid search (Vector + Graph) → LLM answer | Search query |
 
 ---
 
-## 3. Frontend Setup
+## 4. Frontend Setup
 
-### 3.1 Environment Variables
-
-Create `.env` file from the example:
+### 4.1 Create `.env` file
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env` with your Supabase credentials:
 
 ```env
 VITE_SUPABASE_URL=https://your-project-id.supabase.co
-VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
+VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
-### 3.2 Install & Run
+### 4.2 Install and Run
 
 ```bash
 npm install
 npm run dev
 ```
 
+Open `http://localhost:5173` in your browser.
+
+### 4.3 First-Time Setup
+
+1. **Sign up** with email/password on the login page
+2. Go to **Supabase Dashboard > Authentication > Users** and copy your **User UUID**
+3. Run the seed SQL in **SQL Editor** (replace `<YOUR_USER_UUID>`):
+
+```sql
+INSERT INTO folders (user_id, name, slug, is_system, sort_order) VALUES
+  ('<YOUR_USER_UUID>', 'Inbox',          'inbox',          true, 0),
+  ('<YOUR_USER_UUID>', 'Knowledge Base', 'knowledge-base', true, 1),
+  ('<YOUR_USER_UUID>', 'Archive',        'archive',        true, 2),
+  ('<YOUR_USER_UUID>', 'Trash',          'trash',          true, 3);
+```
+
 ---
 
-## 4. Render Deployment
+## 5. Render Deployment
 
-### 4.1 Required Environment Variables
+### 5.1 Environment Variables
 
-When deploying to Render, set these environment variables:
+Set these in Render Dashboard > Environment:
 
-| Variable | Value |
-|----------|-------|
-| `VITE_SUPABASE_URL` | `https://your-project-id.supabase.co` |
-| `VITE_SUPABASE_ANON_KEY` | Your Supabase anon key |
-| `NODE_VERSION` | `20` |
+| Variable | Value | Required |
+|----------|-------|----------|
+| `VITE_SUPABASE_URL` | `https://your-project.supabase.co` | Yes |
+| `VITE_SUPABASE_ANON_KEY` | Your Supabase anon key | Yes |
+| `NODE_VERSION` | `20` | Yes |
 
-### 4.2 Build Settings
+### 5.2 Build Configuration
 
 | Setting | Value |
 |---------|-------|
 | Build Command | `npm install && npm run build` |
 | Publish Directory | `dist` |
 
+### 5.3 Vercel Alternative
+
+If using Vercel instead of Render:
+
+```bash
+npm install -g vercel
+vercel
+# Follow prompts, set environment variables in Vercel Dashboard
+```
+
 ---
 
-## 5. Data Model Reference
+## 6. Feature Reference
 
-### Node Types (`node_type`)
+### UI Layout: Tri-Pane Context Interface
 
-| Type | Description | Korean |
-|------|-------------|--------|
-| `Note` | General note (default) | 노트 |
-| `Claim` | An assertion or argument | 주장 |
-| `Evidence` | Supporting/refuting evidence | 근거 |
-| `Source` | External reference | 출처 |
-| `Person` | A person entity | 인물 |
-| `Definition` | A concept definition | 정의 |
+| Pane | Components | Purpose |
+|------|-----------|---------|
+| **Left** (260px) | FolderTree, TagList, Notes List | Navigation & filtering |
+| **Center** (flex) | TipTap Editor, Search | Writing with `[[wiki-links]]`, Orphan alerts |
+| **Right** (320px) | Local Graph, Similar Context, Model Switcher | Intelligence & context |
 
-### Edge Types (`edge_type`)
+### AI Models
 
-| Type | Color | Description | Korean |
-|------|-------|-------------|--------|
-| `related_to` | Gray | Generic association | 관련 |
-| `supports` | Green | Evidence supports claim | 지지 |
-| `refutes` | Red | Evidence contradicts claim | 반박 |
-| `defines` | Blue | Defines a concept | 정의 |
-| `caused_by` | Orange | Causal relationship | 인과 |
-| `derived_from` | Purple | Derived from another | 파생 |
-| `example_of` | Cyan | Exemplification | 예시 |
-| `part_of` | Slate | Part-whole | 구성 |
+| Model | Provider | Use Case | Speed |
+|-------|----------|----------|-------|
+| Gemini 2.5 Flash | Google | Summarization, extraction | Fast |
+| GPT-4o Mini | OpenAI | Deep reasoning, analysis | Medium |
 
-### Governance Status (`governance_status`)
+### Key Features
 
-| Status | UI Style | Description |
-|--------|----------|-------------|
-| `Active` | Solid line, full opacity | Verified and trusted |
-| `Experimental` | Dashed line, 60% opacity | AI-generated or unverified |
-| `Deprecated` | Dashed line, 30% opacity | Retracted or superseded |
+| Feature | How it works |
+|---------|-------------|
+| **Wiki Links** | Type `[[` in editor to search and link notes. Triggers edge type selection. |
+| **Orphan Alert** | If a saved note has zero edges, a toast appears suggesting tags or links. |
+| **Similar Context** | While writing (30+ chars), the right panel shows top-3 similar past notes in real-time. |
+| **GraphRAG Search** | Question → Embed → Vector Search → Graph Neighbors → LLM Answer with `[Source N]` citations. |
+| **Governance** | AI-generated nodes/edges are `Experimental` (dashed). Click "Approve" to make `Active`. |
 
-### Provenance JSONB Schema
+### Data Model
 
-```json
-{
-  "creator": "User | AI",
-  "model": "gemini-2.5-pro | null",
-  "model_version": "... | null",
-  "source_node_id": "uuid | null",
-  "confidence": 0.85,
-  "method": "extract_graph | summarize | manual | link_suggest"
-}
-```
+#### Node Types
+
+| Type | Icon Color | Korean | Description |
+|------|-----------|--------|-------------|
+| `Note` | Gray | 노트 | General note |
+| `Claim` | Amber | 주장 | An assertion |
+| `Evidence` | Blue | 근거 | Supporting data |
+| `Source` | Purple | 출처 | External reference |
+| `Person` | Pink | 인물 | Person entity |
+| `Definition` | Green | 정의 | Concept definition |
+
+#### Edge Types
+
+| Type | Color | Korean | Description |
+|------|-------|--------|-------------|
+| `supports` | Green | 지지 | Evidence backs claim |
+| `refutes` | Red | 반박 | Evidence contradicts claim |
+| `defines` | Blue | 정의 | Defines a concept |
+| `caused_by` | Orange | 인과 | Causal relationship |
+| `related_to` | Gray | 관련 | Generic association |
+| `derived_from` | Purple | 파생 | Derived from another |
+| `example_of` | Cyan | 예시 | Exemplification |
+| `part_of` | Slate | 구성 | Part-whole |
+
+#### Governance Status
+
+| Status | Style | Meaning |
+|--------|-------|---------|
+| `Active` | Solid, 100% opacity | Verified & trusted |
+| `Experimental` | Dashed, 60% opacity | AI-generated, needs review |
+| `Deprecated` | Dashed, 30% opacity | Retracted or superseded |
