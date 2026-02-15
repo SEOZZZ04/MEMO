@@ -42,7 +42,7 @@ export interface GraphRAGResult {
 }
 
 export function useAI() {
-  const selectedModel = ref<AIModel>(AI_MODELS[0])
+  const selectedModel = ref<AIModel>(AI_MODELS[0]!)
   const loading = ref(false)
   const error = ref<string | null>(null)
   const lastResult = ref<GraphRAGResult | null>(null)
