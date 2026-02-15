@@ -23,7 +23,7 @@ export function useSearch() {
       query_text: query,
       match_user_id: userData.user.id,
       match_count: 20,
-    })
+    } as any)
 
     if (err) {
       error.value = err.message
@@ -49,7 +49,7 @@ export function useSearch() {
       match_user_id: userData.user.id,
       match_threshold: threshold,
       match_count: 10,
-    })
+    } as any)
 
     if (err) {
       error.value = err.message
@@ -72,7 +72,7 @@ export function useSearch() {
       p_node_id: nodeId,
       p_user_id: userData.user.id,
       p_depth: depth,
-    })
+    } as any)
 
     if (err) {
       error.value = err.message
