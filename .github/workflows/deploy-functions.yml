@@ -1,11 +1,12 @@
 name: Deploy Edge Functions
 
 on:
+  workflow_dispatch:  # <--- 이 줄을 추가합니다 (수동 실행 버튼 활성화)
   push:
     branches:
       - main
     paths:
-      - 'supabase/functions/**' 
+      - 'supabase/functions/**'
 
 jobs:
   deploy:
