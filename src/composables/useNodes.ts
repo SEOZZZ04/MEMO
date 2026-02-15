@@ -98,7 +98,7 @@ export function useNodes() {
         tags: input.tags ?? [],
         word_count: input.content.split(/\s+/).filter(Boolean).length,
         provenance,
-      })
+      } as any)
       .select()
       .single()
 
@@ -144,7 +144,7 @@ export function useNodes() {
 
     const { data, error: err } = await supabase
       .from('nodes')
-      .update(updateFields)
+      .update(updateFields as any)
       .eq('id', input.id)
       .select()
       .single()
@@ -240,7 +240,7 @@ export function useNodes() {
       before_state: params.before_state ?? null,
       after_state: params.after_state ?? null,
       metadata: params.metadata ?? {},
-    })
+    } as any)
   }
 
   return {
