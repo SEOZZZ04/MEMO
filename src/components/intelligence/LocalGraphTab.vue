@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch } from 'vue'
 import { useEdges } from '../../composables/useEdges'
 import { useSearch } from '../../composables/useSearch'
 import GraphCanvas from '../graph/GraphCanvas.vue'
