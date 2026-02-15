@@ -93,7 +93,7 @@ function handleContentInput(e: Event) {
   const match = beforeCursor.match(/\[\[([^\]]+)\]\]$/)
 
   if (match) {
-    pendingLinkTarget.value = match[1]
+    pendingLinkTarget.value = match[1] || ''
     showEdgePicker.value = true
   }
 
