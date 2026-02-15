@@ -13,7 +13,7 @@ import type {
   CreateNodeInput,
   UpdateNodeInput,
   EdgeType,
-  Node as MemoNode,
+  
 } from '../types/ontology'
 import { NODE_TYPE_COLORS } from '../types/ontology'
 
