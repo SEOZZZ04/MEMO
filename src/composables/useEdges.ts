@@ -72,7 +72,7 @@ export function useEdges() {
         weight: input.weight ?? 1.0,
         label: input.label ?? null,
         provenance,
-      })
+      } as any)
       .select()
       .single()
 
@@ -101,7 +101,7 @@ export function useEdges() {
 
     const { error: err } = await supabase
       .from('edges')
-      .update({ type })
+      .update({ type } as any)
       .eq('id', id)
 
     if (err) {
