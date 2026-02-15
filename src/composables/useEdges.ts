@@ -91,7 +91,7 @@ export function useEdges() {
       actor: provenance.creator,
       target_edge_id: newEdge.id,
       after_state: data as unknown as Record<string, unknown>,
-    })
+    } as any)
 
     return newEdge
   }
@@ -101,7 +101,7 @@ export function useEdges() {
 
     const { error: err } = await supabase
       .from('edges')
-      .update({ type } as any)
+      .update({ type } as unknown as never) // <--- as unknown as never 로 변경
       .eq('id', id)
 
     if (err) {
