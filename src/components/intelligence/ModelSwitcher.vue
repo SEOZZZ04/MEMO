@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useAI, AI_MODELS } from '../../composables/useAI'
-import type { AIModel } from '../../composables/useAI'
+
 
 const { selectedModel, selectModel } = useAI()
 
