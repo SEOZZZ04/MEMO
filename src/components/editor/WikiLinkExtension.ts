@@ -84,7 +84,8 @@ export function createWikiLinkSuggestion(
           btn.addEventListener('mousedown', (e) => {
             e.preventDefault()
             const idx = parseInt((btn as HTMLElement).dataset.index || '0')
-            onSelectFn(currentItems[idx])
+            const item = currentItems[idx] // 변수로 꺼내서
+            if (item) onSelectFn(item)
           })
         })
       }
