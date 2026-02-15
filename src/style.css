@@ -55,3 +55,55 @@ a:hover {
 ::-webkit-scrollbar-thumb:hover {
   background: #9CA3AF;
 }
+
+/* ===== Wiki-Link Suggestion Popup (global, used by TipTap Mention) ===== */
+.wiki-link-suggestions {
+  position: fixed;
+  z-index: 3000;
+  background: white;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  min-width: 200px;
+  max-width: 360px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.wiki-link-suggestions .suggestion-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: 0.85rem;
+  color: #374151;
+  cursor: pointer;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wiki-link-suggestions .suggestion-item:hover,
+.wiki-link-suggestions .suggestion-item.selected {
+  background: #EFF6FF;
+  color: #2563EB;
+}
+
+/* Wiki-link inline styling (global for TipTap content) */
+.wiki-link {
+  background: #DBEAFE;
+  color: #1D4ED8;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.wiki-link:hover {
+  background: #BFDBFE;
+}
