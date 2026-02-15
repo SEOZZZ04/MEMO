@@ -144,7 +144,7 @@ export function useNodes() {
 
     const { data, error: err } = await supabase
       .from('nodes')
-      .update(updateFields as any)
+      .update(updateFields as unknown as never) // <--- as unknown as never 로 변경
       .eq('id', input.id)
       .select()
       .single()
